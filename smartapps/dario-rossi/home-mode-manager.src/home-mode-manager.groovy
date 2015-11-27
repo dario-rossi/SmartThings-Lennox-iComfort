@@ -59,17 +59,30 @@
             	phrases.sort()
     			section("Run This Phrase When...") {
     				log.trace "Phrases are: " + phrases
-    				input "awayDay", "enum", title: "Everyone is away and it's day.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Goodbye - Day"
-                    input "awayEvening", "enum", title: "Everyone is away and it's evening.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Goodbye - Evening"
-    				input "awayNight", "enum", title: "Everyone is away and it's night.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Goodbye - Night"
-                    input "homeDay", "enum", title: "At least one person is home and it's day.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "I'm Back - Day"
-                    input "homeEvening", "enum", title: "At least one person is home and it's evening.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "I'm Back - Evening"
-                    input "homeNight", "enum", title: "At least one person is home and it's night.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "I'm Back - Night"
-    			}
+    				input "awayDay", "enum", title: "Everyone leaves and it's day.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Goodbye - Day"
+                    input "awayEvening", "enum", title: "Everyone leaves and it's evening.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Goodbye - Evening"
+    				input "awayNight", "enum", title: "Everyone leaves and it's night.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Goodbye - Night"
+
+					input "inAwayToDay", "enum", title: "Everyone is away and it becomes day.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Goodbye - Day"
+                    input "inAwayToEvening", "enum", title: "Everyone is away and it becomes evening.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Goodbye - Evening"
+    				input "inAwaytoNight", "enum", title: "Everyone is away and it becomes night.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Goodbye - Night"
+                    
+                    input "homeDay", "enum", title: "At least one person arrives home and it's day.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "I'm Back - Day"
+                    input "homeEvening", "enum", title: "At least one person arrives home and it's evening.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "I'm Back - Evening"
+                    input "homeNight", "enum", title: "At least one person arrives home and it's night.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "I'm Back - Night"
+
+					input "inHomeToDay", "enum", title: "At least one person is home and it becomes day.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Good Morning!"
+                    input "inHomeToEvening", "enum", title: "At least one person is home and it becomes evening.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Good Evening!"
+    				input "inHometoNight", "enum", title: "At least one person is home and it becomes night.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Good Night!"
+
+			}
                 section("Select modes used for each condition. (Needed for better app logic)") {
             		input "homeModeDay", "mode", title: "Select mode used for the 'Home Day' phrase", required: true, defaultValue: "Home - Day"
             		input "homeModeEvening", "mode", title: "Select mode used for the 'Home Evening' phrase", required: true, defaultValue: "Home - Evening"
             		input "homeModeNight", "mode", title: "Select mode used for the 'Home Night' phrase", required: true, defaultValue: "Home - Night"
+                    input "awayModeDay", "mode", title: "Select mode used for the 'Home Day' phrase", required: true, defaultValue: "Away - Day"
+            		input "awayModeEvening", "mode", title: "Select mode used for the 'Home Evening' phrase", required: true, defaultValue: "Away - Evening"
+            		input "awayModeNight", "mode", title: "Select mode used for the 'Home Night' phrase", required: true, defaultValue: "Away - Night"
       			}
 				section("Set time in evening when to switch to night mode (Needed for better app logic)") {
             		input name: "nightModeInitiationTime", type: "time", title: "Set time to switch to appropriate night mode", required: true, defaultValue: "23:00"
@@ -100,7 +113,7 @@
         runIn(60, checkSun)
     	subscribe(location, "sunrise", setSunrise)
     	subscribe(location, "sunset", setSunset)
-        schedule(settings.nightModeInitiationTime, "changeToNightMode")
+        schedule(nightModeInitiationTime, "changeToNightMode")
     }
     
     //check current sun state when installed.
@@ -138,7 +151,9 @@
    
     //change to night mode
     def changeToNightMode() {
-		if(everyoneIsAway()) {
+		log.info("It is night time ${nightModeInitiationTime}, checking which night mode to set based on if anyone is home.")
+		
+        if(everyoneIsAway()) {
 			def message = "Performing \"${awayNight}\" for you as requested."
 			log.info(message)
 			sendAway(message)
