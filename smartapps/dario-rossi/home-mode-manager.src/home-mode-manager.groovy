@@ -65,7 +65,7 @@
 
 					input "inAwayToDay", "enum", title: "Everyone is away and it becomes day.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Goodbye - Day"
                     input "inAwayToEvening", "enum", title: "Everyone is away and it becomes evening.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Goodbye - Evening"
-    				input "inAwaytoNight", "enum", title: "Everyone is away and it becomes night.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Goodbye - Night"
+    				input "inAwayToNight", "enum", title: "Everyone is away and it becomes night.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Goodbye - Night"
                     
                     input "homeDay", "enum", title: "At least one person arrives home and it's day.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "I'm Back - Day"
                     input "homeEvening", "enum", title: "At least one person arrives home and it's evening.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "I'm Back - Evening"
@@ -73,7 +73,7 @@
 
 					input "inHomeToDay", "enum", title: "At least one person is home and it becomes day.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Good Morning!"
                     input "inHomeToEvening", "enum", title: "At least one person is home and it becomes evening.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Good Evening!"
-    				input "inHometoNight", "enum", title: "At least one person is home and it becomes night.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Good Night!"
+    				input "inHomeToNight", "enum", title: "At least one person is home and it becomes night.", required: true, options: phrases,  refreshAfterSelection:false, defaultValue: "Good Night!"
 
 			}
                 section("Select modes used for each condition. (Needed for better app logic)") {
@@ -126,13 +126,13 @@
       log.debug "CheckSun: sunInfo.sunset.time: " + sunInfo.sunset.time
     
     if (sunInfo.sunrise.time < current && sunInfo.sunset.time > current) {
-        state.sunMode = "sunrise"
-       setSunrise()
+		state.sunMode = "sunrise"
+		setSunrise()
       }
       
     else {
-       state.sunMode = "sunset"
-        setSunset()
+		state.sunMode = "sunset"
+		setSunset()
       }
     }
     
@@ -153,19 +153,32 @@
     def changeToNightMode() {
 		log.info("It is night time ${nightModeInitiationTime}, checking which night mode to set based on if anyone is home.")
 		
-        if(everyoneIsAway()) {
+        if(everyoneIsAway() && (location.currentMode == settings.awayModeDay || location.currentMode == settings.awayModeEvening || location.currentMode == settings.awayModeNight)) {
+			def message = "Performing \"${inAwayToNight}\" for you as requested."
+			log.info(message)
+			sendAway(message)
+			location.helloHome.execute(settings.inAwayToNight)
+      	}
+        else if(everyoneIsAway() && (location.currentMode == settings.homeModeDay || location.currentMode == settings.homeModeEvening || location.currentMode == settings.homeModeNight)) {
 			def message = "Performing \"${awayNight}\" for you as requested."
 			log.info(message)
 			sendAway(message)
 			location.helloHome.execute(settings.awayNight)
-      	}
+      	} 
 
-		if(anyoneIsHome()) {
+		if(anyoneIsHome() && (location.currentMode == settings.awayModeDay || location.currentMode == settings.awayModeEvening || location.currentMode == settings.awayModeNight)) {
 			def message = "Performing \"${homeNight}\" for you as requested."
             log.info(message)
             sendHome(message)
             location.helloHome.execute(settings.homeNight)
 		}
+        else if(anyoneIsHome() && (location.currentMode == settings.homeModeDay || location.currentMode == settings.homeModeEvening || location.currentMode == settings.homeModeNight)) {
+			def message = "Performing \"${inHomeToNight}\" for you as requested."
+            log.info(message)
+            sendHome(message)
+            location.helloHome.execute(settings.inHomeToNight)
+		}
+        
 	}
 
     //change mode on sun event
@@ -222,21 +235,27 @@
     def setAway() {
       if(everyoneIsAway()) {
         
-        if(state.sunMode == "sunset"){
+        if(state.sunMode == "sunset" && (location.currentMode == settings.awayModeDay || location.currentMode == settings.awayModeEvening || location.currentMode == settings.awayModeNight)){
+          def message = "Performing \"${inAwayToEvening}\" for you as requested."
+          log.info(message)
+          sendAway(message)
+          location.helloHome.execute(settings.inAwayToEvening)
+        }
+
+        else if(state.sunMode == "sunrise" && (location.currentMode == settings.awayModeDay || location.currentMode == settings.awayModeEvening || location.currentMode == settings.awayModeNight)) {
+          def message = "Performing \"${inAwayToDay}\" for you as requested."
+          log.info(message)
+          sendAway(message)
+          location.helloHome.execute(settings.inAwayToDay)
+          }
+        else if(state.sunMode == "sunset" && (location.currentMode == settings.homeModeDay || location.currentMode == settings.homeModeEvening || location.currentMode == settings.homeModeNight)){
           def message = "Performing \"${awayEvening}\" for you as requested."
           log.info(message)
           sendAway(message)
           location.helloHome.execute(settings.awayEvening)
         }
 
-        /*if( (state.sunMode == "sunset") && (location.mode == "${homeModeNight}") ) {
-          def message = "Performing \"${awayNight}\" for you as requested."
-          log.info(message)
-          sendAway(message)
-          location.helloHome.execute(settings.awayNight)
-        }*/
-
-        else if(state.sunMode == "sunrise") {
+        else if(state.sunMode == "sunrise" && (location.currentMode == settings.homeModeDay || location.currentMode == settings.homeModeEvening || location.currentMode == settings.homeModeNight)) {
           def message = "Performing \"${awayDay}\" for you as requested."
           log.info(message)
           sendAway(message)
@@ -258,34 +277,41 @@
         log.info("Setting Home Mode!!")
         
         if(anyoneIsHome()) {
-                if(state.sunMode == "sunset"){
-
-                    //STILL TO DO: Need to add a check here to change to awayNight Mode when hits night time....
-/*                    if ( (location.mode != "${homeModeNight}") ) {
-                        def message = "Performing \"${homeNight}\" for you as requested."
+                if(state.sunMode == "sunset" && (location.currentMode == settings.homeModeDay || location.currentMode == settings.homeModeEvening || location.currentMode == settings.homeModeNight)){
+					if ( (location.mode != "${homeModeEvening}") ){
+						def message = "Performing \"${inHomeToEvening}\" for you as requested."
                         log.info(message)
                         sendHome(message)
-                        location.helloHome.execute(settings.homeNight)
+                        location.helloHome.execute(settings.inHomeToEvening)
 					}
-*/
-                    if ( (location.mode != "${homeModeEvening}") ){
-                        def message = "Performing \"${homeEvening}\" for you as requested."
+                }
+
+				if(state.sunMode == "sunrise" && (location.currentMode == settings.homeModeDay || location.currentMode == settings.homeModeEvening || location.currentMode == settings.homeModeNight)){
+					if (location.mode != "${homeModeDay}"){
+						def message = "Performing \"${inHomeToDay}\" for you as requested."
+                	    log.info(message)
+                    	sendHome(message)
+                    	location.helloHome.execute(settings.inHomeToDay)
+                    }
+				}     
+                if(state.sunMode == "sunset" && (location.currentMode == settings.awayModeDay || location.currentMode == settings.awayModeEvening || location.currentMode == settings.awayModeNight)){
+					if ( (location.mode != "${homeModeEvening}") ){
+						def message = "Performing \"${homeEvening}\" for you as requested."
                         log.info(message)
                         sendHome(message)
                         location.helloHome.execute(settings.homeEvening)
 					}
                 }
 
-              if(state.sunMode == "sunrise"){
-                  if (location.mode != "${homeModeDay}"){
-                  def message = "Performing \"${homeDay}\" for you as requested."
-                    log.info(message)
-                    sendHome(message)
-                    location.helloHome.execute(settings.homeDay)
+				if(state.sunMode == "sunrise" && (location.currentMode == settings.awayModeDay || location.currentMode == settings.awayModeEvening || location.currentMode == settings.awayModeNight)){
+					if (location.mode != "${homeModeDay}"){
+						def message = "Performing \"${homeDay}\" for you as requested."
+                	    log.info(message)
+                    	sendHome(message)
+                    	location.helloHome.execute(settings.homeDay)
                     }
-              }     
-        }
-        
+				}     
+		}
     }
     
     private everyoneIsAway() {
