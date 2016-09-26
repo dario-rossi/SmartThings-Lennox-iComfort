@@ -50,8 +50,17 @@
     def selectPhrases() {
     	def configured = (settings.awayDay && settings.awayNight && settings.homeDay && settings.homeNight)
         dynamicPage(name: "selectPhrases", title: "Configure", nextPage:"Settings", uninstall: true) {		
-    		section("Who?") {
+			section("Current Home Mode when app was opened:") {
+         		 def locationCurrentMode = ""
+                 locationCurrentMode = "$location.currentMode\n"
+                 paragraph locationCurrentMode.trim()
+         	}
+
+			section("Who?") {
     			input "people", "capability.presenceSensor", title: "Monitor the presences", required: true, multiple: true,  refreshAfterSelection:false
+    		}
+            section("Who - School?") {
+    			input "peopleSchool", "capability.presenceSensor", title: "Monitor the presences on weekday school hours", required: true, multiple: true,  refreshAfterSelection:false
     		}
             
     		def phrases = location.helloHome?.getPhrases()*.label
@@ -87,6 +96,12 @@
 				section("Set time in evening when to switch to night mode (Needed for better app logic)") {
             		input name: "nightModeInitiationTime", type: "time", title: "Set time to switch to appropriate night mode", required: true, defaultValue: "23:00"
       			}
+                section("Set start and end time to monitor presence sensors for School") {
+            		input name: "schoolMonitorPresenseStartTime", type: "time", title: "Set start time to have Presense Sensors selected affect Home Mode", required: true, defaultValue: "8:00"
+                    input name: "schoolMonitorPresenseEndTime", type: "time", title: "Set end time to have Presense Sensors selected affect Home Mode", required: true, defaultValue: "4:00"
+                    input "schoolDays", "enum", title: "Only on certain days of the week", multiple: true, required: false,
+    				options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+      			}
 
     		}
         }
@@ -110,6 +125,7 @@
     
     def initialize() {
     	subscribe(people, "presence", presence)
+        subscribe(peopleSchool, "presence", presence)
         runIn(60, checkSun)
     	subscribe(location, "sunrise", setSunrise)
     	subscribe(location, "sunset", setSunset)
@@ -218,6 +234,7 @@
           runIn(delay, "setAway")
         }
       }
+      
     
     else {
     	def lastTime = state[evt.deviceId]
@@ -315,28 +332,44 @@
     }
     
     private everyoneIsAway() {
-      def result = true
-    
-      if(people.findAll { it?.currentPresence == "present" }) {
-        result = false
-      }
+		def result = true
+
+		if(schoolDaysAndTimeOk) {
+			if( (people.findAll { it?.currentPresence == "present" }) || (peopleSchool.findAll { it?.currentPresence == "present" }) ) {
+				result = false
+			}
+        }
+        else {
+			if( (people.findAll { it?.currentPresence == "present" }) ) {
+				result = false
+			}
+		}
     
       log.debug("everyoneIsAway: ${result}")
     
       return result
     }
     
-    private anyoneIsHome() {
-      def result = false
     
-      if(people.findAll { it?.currentPresence == "present" }) {
-        result = true
-      }
+    private anyoneIsHome() {
+		def result = false
+
+		if(schoolDaysAndTimeOk) {
+            if( (people.findAll { it?.currentPresence == "present" }) || (peopleSchool.findAll { it?.currentPresence == "present" }) ) {
+                result = true
+            }
+		}
+		else {
+			if( (people.findAll { it?.currentPresence == "present" }) ) {
+				result = true
+			}
+		}
     
       log.debug("anyoneIsHome: ${result}")
     
       return result
     }
+   
     
     def sendAway(msg) {
       if(sendPushMessage != "No") {
@@ -394,6 +427,44 @@
     	log.trace "timeOk = $result"
     	result
     }
+    
+        private getschoolAllOk() {
+    	schooldDaysOk && schoolTimeOk
+    }
+    
+    private getschoolDaysAndTimeOk() {
+    	schoolDaysOk && schoolTimeOk
+    }
+    
+    private getschoolDaysOk() {
+    	def result = true
+    	if (schoolDays) {
+    		def df = new java.text.SimpleDateFormat("EEEE")
+    		if (location.timeZone) {
+    			df.setTimeZone(location.timeZone)
+    		}
+    		else {
+    			df.setTimeZone(TimeZone.getTimeZone("America/New_York"))
+    		}
+    		def day = df.format(new Date())
+    		result = schoolDays.contains(day)
+    	}
+    	log.trace "schoolDaysOk = $result"
+    	result
+    }
+    
+    private getschoolTimeOk() {
+    	def result = true
+    	if (schoolMonitorPresenseStartTime && schoolMonitorPresenseEndTime) {
+    		def currTime = now()
+    		def start = timeToday(schoolMonitorPresenseStartTime).time
+    		def stop = timeToday(schoolMonitorPresenseEndTime).time
+    		result = start < stop ? currTime >= start && currTime <= stop : currTime <= stop || currTime >= start
+    	}
+    	log.trace "schoolTimeOk = $result"
+    	result
+    }
+    
     
     private hhmm(time, fmt = "h:mm a")
     {
