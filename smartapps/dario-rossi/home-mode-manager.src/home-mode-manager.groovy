@@ -96,6 +96,14 @@
 				section("Set time in evening when to switch to night mode (Needed for better app logic)") {
             		input name: "nightModeInitiationTime", type: "time", title: "Set time to switch to appropriate night mode", required: true, defaultValue: "23:00"
       			}
+                section ("Sunrise offset (optional)...") {
+					input "sunriseOffsetValue", "text", title: "HH:MM", required: false, defaultValue: "00:00"
+					input "sunriseOffsetDir", "enum", title: "Before or After", required: false, options: ["Before","After"], defaultValue: "Before"
+				}
+				section ("Sunset offset (optional)...") {
+					input "sunsetOffsetValue", "text", title: "HH:MM", required: false, defaultValue: "00:20"
+					input "sunsetOffsetDir", "enum", title: "Before or After", required: false, options: ["Before","After"], defaultValue: "After"
+				}
                 section("Set start and end time to monitor presence sensors for School") {
             		input name: "schoolMonitorPresenseStartTime", type: "time", title: "Set start time to have Presense Sensors selected affect Home Mode", required: true, defaultValue: "8:00"
                     input name: "schoolMonitorPresenseEndTime", type: "time", title: "Set end time to have Presense Sensors selected affect Home Mode", required: true, defaultValue: "4:00"
@@ -135,11 +143,28 @@
     //check current sun state when installed.
     def checkSun() {
       def zip     = settings.zip as String
-      def sunInfo = getSunriseAndSunset(zipCode: zip)
+      log.debug "ZipCode is: ${zip}"
+      def preOffsetSunInfo = getSunriseAndSunset(zipCode: zip)
+
+	  def df = new java.text.SimpleDateFormat("hh:mm:ss a")
+	  df.setTimeZone(location.timeZone)
+
+	  def preOffsetSunriseTime = df.format(preOffsetSunInfo.sunrise)
+      def preOffsetSunsetTime = df.format(preOffsetSunInfo.sunset)
+
+
+      log.debug "CheckSun: preOffsetSunInfo.sunrise.time: " + preOffsetSunInfo.sunrise.time + " in readable form: ${preOffsetSunriseTime}"
+      log.debug "CheckSun: preOffsetSunInfo.sunset.time: " + preOffsetSunInfo.sunset.time + " in readable form: ${preOffsetSunsetTime}"
+
+      def sunInfo = getSunriseAndSunset(zipCode: zip, sunriseOffset: sunriseOffset, sunsetOffset: sunsetOffset)
       def current = now()
-	  log.debug "CheckSun: Current time is: " + current
-      log.debug "CheckSun: sunInfo.sunrise.time: " + sunInfo.sunrise.time
-      log.debug "CheckSun: sunInfo.sunset.time: " + sunInfo.sunset.time
+      
+      def localTime = df.format(current)
+      def localSunriseTime = df.format(sunInfo.sunrise)
+      def localSunsetTime = df.format(sunInfo.sunset)
+	  log.debug "CheckSun: Current time is: " + current + " in readable form: ${localTime}"
+      log.debug "CheckSun: Offset sunInfo.sunrise.time: " + sunInfo.sunrise.time + " in readable form: ${localSunriseTime}"
+      log.debug "CheckSun: Offset sunInfo.sunset.time: " + sunInfo.sunset.time + " in readable form: ${localSunsetTime}"
     
     if (sunInfo.sunrise.time < current && sunInfo.sunset.time > current) {
 		state.sunMode = "sunrise"
@@ -482,3 +507,10 @@
     private hideOptionsSection() {
     	(starting || ending || days || modes) ? false : true
     }
+    private getSunriseOffset() {
+		sunriseOffsetValue ? (sunriseOffsetDir == "Before" ? "-$sunriseOffsetValue" : sunriseOffsetValue) : null
+	}
+
+	private getSunsetOffset() {
+		sunsetOffsetValue ? (sunsetOffsetDir == "Before" ? "-$sunsetOffsetValue" : sunsetOffsetValue) : null
+	}
