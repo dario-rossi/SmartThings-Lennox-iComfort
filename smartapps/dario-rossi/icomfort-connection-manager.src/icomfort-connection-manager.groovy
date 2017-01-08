@@ -94,73 +94,75 @@ def prefListDevice() {
 
 /* Initialization */
 def installed() { initialize() }
-def updated() { initialize() }
+def updated() { 
+	unsubscribe()
+	initialize() 
+}
 
 def uninstalled() {
 	unschedule()
-	def deleteDevices = getAllChildDevices()
-	deleteDevices.each { deleteChildDevice(it.deviceNetworkId) }
+	getAllChildDevices().each { deleteChildDevice(it.deviceNetworkId) }
 }	
 
-def initialize() {    
-	unsubscribe()
-    
+def initialize() {
 	// Get initial polling state
-	state.polling = [ 
-		last: now(),
-		runNow: true
-	]
+	state.polling = [ last: 0, rescheduler: now() ]
     
-	// Create new devices for each selected doors
-	def selectedDevices = []
+	
+	// Create new devices for each selected Thermostat
+	def selectedDevices = [] + getSelectedDevices("thermostat")
 	def thermostatList = getThermostatList()
-	def deleteDevices 
-   	 
-	if (settings.thermostat) {
-		if (settings.thermostat[0].size() > 1) {
-			selectedDevices = settings.thermostat
-		} else {
-			selectedDevices.add(settings.thermostat)
-		}
-	}
-     
-	selectedDevices.each { dni ->    	
-		def childDevice = getChildDevice(dni)
-		if (!childDevice) {
-            		addChildDevice("dario.rossi", "iComfort Thermostat", dni, null, ["name": thermostatList[dni],  "completedSetup": true])
-		} 
-	}
-    
+	selectedDevices.each { (getChildDevice(it))?:addChildDevice("dario.rossi", "iComfort Thermostat", it, null, ["name": thermostatList[it], "completedSetup": true]) }
+	
 	//Remove devices that are not selected in the settings
-	if (!selectedDevices) {
-		deleteDevices = getAllChildDevices()
-	} else {
-		deleteDevices = getChildDevices().findAll { !selectedDevices.contains(it.deviceNetworkId) }
-	}
-	deleteDevices.each { deleteChildDevice(it.deviceNetworkId) } 
+	def deleteDevices = (selectedDevices) ? (getChildDevices().findAll { !selectedDevices.contains(it.deviceNetworkId) }) : getAllChildDevices()
+	deleteDevices.each { deleteChildDevice(it.deviceNetworkId) }    	
 	
-	
+	//Subscribes to sunrise and sunset event to trigger refreshes
+	subscribe(location, "sunrise", runRefresh)
+	subscribe(location, "sunset", runRefresh)
+	subscribe(location, "mode", runRefresh)
+	subscribe(location, "sunriseTime", runRefresh)
+	subscribe(location, "sunsetTime", runRefresh)
+		
 	//Refresh device
-	refresh()
-    
-	// Schedule polling
-	unschedule()
-	schedule("0 0/" + ((settings.polling.toInteger() > 0 )? settings.polling.toInteger() : 1)  + " * * * ?", refresh )
+	runRefresh()
 }
+
+def getSelectedDevices( settingsName ) { 
+	def selectedDevices = [] 
+	(!settings.get(settingsName))?:((settings.get(settingsName)?.getAt(0)?.size() > 1)  ? settings.get(settingsName)?.each { selectedDevices.add(it) } : selectedDevices.add(settings.get(settingsName))) 
+	return selectedDevices 
+} 
 
 /* Access Management */
 private loginCheck() { 
-	apiPut("/DBAcessService.svc/ValidateUser", [query: [UserName: settings.username, lang_nbr: "1"]] ) { response ->
-		if (response.status == 200) {
-			if (response.data.msg_code == "SUCCESS") {
-				return true
-			} else {
-				return false
-			}
-		} else {
-			return false
-		}
-	} 	
+   def request = [	uri: "https://services.myicomfort.com", 
+                    path: "/DBAcessService.svc/ValidateUser", 
+                    headers: [Authorization : getApiAuth()],
+                    contentType: "application/x-www-form-urlencoded",
+                    requestContentType: "application/json; charset=utf-8",
+                    query: [username:settings.username]
+                    ]
+
+    log.debug "logincheck Http Params ("+request+")"
+    
+    try{
+        log.debug "Executing 'sendCommand'"
+        
+        httpPut(request)
+    } catch(Exception e){
+        log.debug("___exception: " + e)
+    }    
+    
+    
+    //apiPut("/DBAcessService.svc/ValidateUser", [ requestContentType: "application/json", query: [username: settings.username] ] ) { response ->
+	//	if (response.status == 200) {
+	//		return (response.data.msg_code == "SUCCESS") ? true : false
+	//	} else {
+	//		return false
+	//	}
+	//}
 }
 
 // Listing all the thermostats you have in iComfort
@@ -225,9 +227,11 @@ private getThermostatList() {
 	}   
 	//Retrieve all the Zones
 	gatewayList.each { gatewaySN, gatewayName ->		
-		apiGet("/DBAcessService.svc/GetTStatInfoList", [query: [GatewaySN: gatewaySN, TempUnit: (getTemperatureUnit()=="F")?0:1, Cancel_Away: "-1"]]) { response ->
+		apiGet("/DBAcessService.svc/GetTStatInfoList", [query: [GatewaySN: gatewaySN, TempUnit: (getTemperatureScale()=="F")?0:1, Cancel_Away: "-1"]]) { response ->
 			if (response.status == 200) {
-				//log.debug "zones: " + response.data.tStatInfo
+				if (settings.debugVerbosityLevel.toInteger() > 5) {
+					log.debug "zones: " + response.data.tStatInfo
+				}
 				response.data.tStatInfo.each { 
 					def dni = [ app.id, gatewaySN, it.Zone_Number ].join('|')
 					thermostatList[dni] = ( it.Zones_Installed > 1 )? gatewayName + ": " + it.Zone_Name : gatewayName
@@ -248,7 +252,7 @@ private getThermostatList() {
 						thermostatProgramSelection: it.Program_Schedule_Selection
 					]
                     if (settings.debugVerbosityLevel.toInteger() >= 10) {
-                    	log.debug "Dario Thermostat Info: " + it.Indoor_Temp.toString()
+                    	log.debug "Thermostat Info: " + it.Indoor_Temp.toString()
                     }
 					
 					//Get Devices Program lookups
@@ -280,17 +284,12 @@ private getThermostatList() {
 	return thermostatList
 }
 
-
-
 /* api connection */
 	
 // HTTP GET call
 private apiGet(apiPath, apiParams = [], callback = {}) {	
 	// set up parameters
-	apiParams = [ 
-		uri: "https://" + settings.username + ":" + settings.password + "@services.myicomfort.com",
-		path: apiPath,
-	] + apiParams
+	apiParams = [ uri: getApiURL(),	path: apiPath, headers: [Authorization : getApiAuth()] ] + apiParams
 	
 	// try to call 
 	try {
@@ -311,11 +310,7 @@ private apiGet(apiPath, apiParams = [], callback = {}) {
 // HTTP PUT call
 private apiPut(apiPath, apiParams = [], callback = {}) {    
 	// set up final parameters
-	apiParams = [ 
-		uri: "https://" + settings.username + ":" + settings.password + "@services.myicomfort.com",
-		path: apiPath,
-	] + apiParams
-    
+	apiParams = [ uri: getApiURL(), path: apiPath, headers: [Authorization : getApiAuth()] ] + apiParams
     
 	try {
 		if (settings.debugVerbosityLevel.toInteger() > 5) {
@@ -332,65 +327,45 @@ private apiPut(apiPath, apiParams = [], callback = {}) {
 	}
 }
 
-// Updates data for devices
-def updateDeviceData() {    
-	// Next polling time, defined in settings
-	def next = (state.polling.last?:0) + ((settings.polling.toInteger() > 0 ? settings.polling.toInteger() : 1) * 60 * 1000)
-	if ((now() > next) || (state.polling.runNow)) {
-		// set polling states
-		state.polling.last = now()
-		state.polling.runNow = false
-		
-		// update data for child devices
-		updateDeviceChildData()
-	}
-	return true
-}
-
 // update child device data
-private updateDeviceChildData() {
-	def childDevices = getAllChildDevices()
+private updateDeviceChildData(device) {
     if (settings.debugVerbosityLevel.toInteger() > 5) {
-    	log.debug "updateDeviceChildData - childDevices: " + childDevices
+    	log.debug "updateDeviceChildData - childDevices: " + device
     }
-	childDevices.each { device ->
-		def childDevicesGateway = getDeviceGatewaySN(device)
-		apiGet("/DBAcessService.svc/GetTStatInfoList", [query: [GatewaySN: childDevicesGateway, TempUnit: (getTemperatureUnit()=="F")?0:1, Cancel_Away: "-1"]]) { response ->
-			if (response.status == 200) {
-                response.data.tStatInfo.each {
-                    
-                    def thisDeviceNetworkId = [ app.id, childDevicesGateway, it.Zone_Number ].join('|')
-					
-                    if (settings.debugVerbosityLevel.toInteger() > 5) {
-                		log.debug "updateDeviceChildData - device.deviceNetworkId: " + device.deviceNetworkId
-                		log.debug "updateDeviceChildData - Before setting in array - state.data[device.deviceNetworkId]: " + state.data[device.deviceNetworkId]
-                        log.debug "updateDeviceChildData - Before setting in array - it: " + it
-                        log.debug "updateDeviceChildData - thisDeviceNetworkId: " + thisDeviceNetworkId
-                	}
-					
-                    if (thisDeviceNetworkId == device.deviceNetworkId) {
-                    	state.data[device.deviceNetworkId] = [
-							temperature: it.Indoor_Temp,
-							humidity: it.Indoor_Humidity,
-							coolingSetpoint: it.Cool_Set_Point,
-							heatingSetpoint: it.Heat_Set_Point,
-							thermostatMode: lookupInfo( "thermostatMode", it.Operation_Mode.toString(), true ),
-							thermostatFanMode: lookupInfo( "thermostatFanMode", it.Fan_Mode.toString(), true ),
-							thermostatOperatingState: lookupInfo( "thermostatOperatingState", it.System_Status.toString(), true ),
-							thermostatProgramMode: it.Program_Schedule_Mode,
-							thermostatProgramSelection: it.Program_Schedule_Selection
-						]
-                    }  else {
-              	    	if (settings.debugVerbosityLevel.toInteger() > 5) {
-                        	log.debug "updateDeviceChildData - thisDeviceNetworkId doesn't match device.deviceNetworkId so skipping it: " + thisDeviceNetworkId + ":" + device.deviceNetworkId
-                        }
-                    } 
-					if (settings.debugVerbosityLevel.toInteger() > 5) {
-                		log.debug "updateDeviceChildData - device.deviceNetworkId: " + device.deviceNetworkId
-                		log.debug "updateDeviceChildData - After setting in array - state.data[device.deviceNetworkId]: " + state.data[device.deviceNetworkId]
-                        log.debug "updateDeviceChildData - After setting in array - it: " + it
-                	}
+	apiGet("/DBAcessService.svc/GetTStatInfoList", [query: [GatewaySN: getDeviceGatewaySN(device), TempUnit: (getTemperatureScale()=="F")?0:1, Cancel_Away: "-1"]]) { response ->
+		if (response.status == 200) {
+			response.data.tStatInfo.each {
+				def thisDeviceNetworkId = [ app.id, getDeviceGatewaySN(device), it.Zone_Number ].join('|')
+				if (settings.debugVerbosityLevel.toInteger() > 5) {
+					log.debug "updateDeviceChildData - device.deviceNetworkId: " + device.deviceNetworkId
+					log.debug "updateDeviceChildData - Before setting in array - state.data[device.deviceNetworkId]: " + state.data[device.deviceNetworkId]
+					log.debug "updateDeviceChildData - Before setting in array - it: " + it
+					log.debug "updateDeviceChildData - thisDeviceNetworkId: " + thisDeviceNetworkId
                 }
+				if (thisDeviceNetworkId == device.deviceNetworkId) {
+					state.data[device.deviceNetworkId] = [
+						temperature: it.Indoor_Temp,
+						humidity: it.Indoor_Humidity,
+						coolingSetpoint: it.Cool_Set_Point,
+						heatingSetpoint: it.Heat_Set_Point,
+						thermostatMode: lookupInfo( "thermostatMode", it.Operation_Mode.toString(), true ),
+						thermostatFanMode: lookupInfo( "thermostatFanMode", it.Fan_Mode.toString(), true ),
+						thermostatOperatingState: lookupInfo( "thermostatOperatingState", it.System_Status.toString(), true ),
+						thermostatProgramMode: it.Program_Schedule_Mode,
+						thermostatProgramSelection: it.Program_Schedule_Selection
+					]
+					return true
+				}  else {
+					if (settings.debugVerbosityLevel.toInteger() > 5) {
+						log.debug "updateDeviceChildData - thisDeviceNetworkId doesn't match device.deviceNetworkId so skipping it: " + thisDeviceNetworkId + ":" + device.deviceNetworkId
+						return false
+					}
+				} 
+				if (settings.debugVerbosityLevel.toInteger() > 5) {
+					log.debug "updateDeviceChildData - device.deviceNetworkId: " + device.deviceNetworkId
+					log.debug "updateDeviceChildData - After setting in array - state.data[device.deviceNetworkId]: " + state.data[device.deviceNetworkId]
+					log.debug "updateDeviceChildData - After setting in array - it: " + it
+				}
 			}
 		}
 	}
@@ -424,44 +399,25 @@ def lookupInfo( lookupName, lookupValue, lookupMode ) {
 /* for SmartDevice to call */
 // Refresh data
 def refresh() {
-	state.polling = [ 
-		last: now(),
-		runNow: true
-	]
+	log.info "Refreshing data..."
+	//set polling states
+	state.polling["last"] = now()
 	
-	//update device to state data
-	def updated = updateDeviceData()
-	
+	// update data for child devices
+	getAllChildDevices().each { (!updateDeviceChildData(it))?:it.updateThermostatData(state.data[it.deviceNetworkId.toString()]) }
 	
     if (settings.debugVerbosityLevel.toInteger() > 5) {
     	log.debug "state data: " + state.data
         log.debug "state lookup: " + state.lookup
 		log.debug "state list: " + state.list
     }
-    
-	//force devices to poll to get the latest status
-	if (updated) { 
-		// get all the children and send updates
-		def childDevice = getAllChildDevices()
-		childDevice.each { 
-			if (settings.debugVerbosityLevel.toInteger() >= 5) {
-            	log.debug "Updating " + it.deviceNetworkId
-                log.debug "Updating: state.data[it.deviceNetworkId]: " + state.data[it.deviceNetworkId]
-            }
-			//it.poll()
-			it.updateThermostatData(state.data[it.deviceNetworkId])
-		}
-	}
 }
 
 // Get Device Gateway SN
-def getDeviceGatewaySN(childDevice) { return childDevice.deviceNetworkId.split("\\|")[1] }
-
-// Get Device Zone
-def getDeviceZone(childDevice) { return childDevice.deviceNetworkId.split("\\|")[2] }
+def getDeviceGatewaySN(childDevice) { return childDevice.deviceNetworkId.toString().split("\\|")[1] }
 
 // Get single device status
-def getDeviceStatus(childDevice) { return state.data[childDevice.deviceNetworkId] 
+def getDeviceZone(childDevice) { 
 
     if (settings.debugVerbosityLevel.toInteger() >= 10) {
     	log.debug "getDeviceStatus.childDevice: " + childDevice
@@ -469,6 +425,7 @@ def getDeviceStatus(childDevice) { return state.data[childDevice.deviceNetworkId
         log.debug "getDeviceStatus.state.data: " + state.data
         log.debug "getDeviceStatus.state.data[childDevice.deviceNetworkId]: " + state.data[childDevice.deviceNetworkId]
     }
+	return childDevice.deviceNetworkId.toString().split("\\|")[2]
 }
 
 // Send thermostat
@@ -486,7 +443,7 @@ def setThermostat(childDevice, thermostatData = []) {
 		Heat_Set_Point: state.data[childDevice.deviceNetworkId].heatingSetpoint,
 		Fan_Mode: lookupInfo("thermostatFanMode",state.data[childDevice.deviceNetworkId].thermostatFanMode.toString(),false),
 		Operation_Mode: lookupInfo("thermostatMode",state.data[childDevice.deviceNetworkId].thermostatMode.toString(),false),
-		Pref_Temp_Units: (getTemperatureUnit()=="F")?0:1,
+		Pref_Temp_Units: (getTemperatureScale()=="F")?0:1,
 		Zone_Number: getDeviceZone(childDevice),
 		GatewaySN: getDeviceGatewaySN(childDevice) 
 	]
@@ -500,11 +457,12 @@ def setThermostat(childDevice, thermostatData = []) {
 def setProgram(childDevice, scheduleMode, scheduleSelection) {
 	def apiBody = []
     def thermostatData = []
+	
 	//Retrieve program info
 	state.data[childDevice.deviceNetworkId].thermostatProgramMode = scheduleMode
 	if (scheduleMode == "1") {
 		state.data[childDevice.deviceNetworkId].thermostatProgramSelection = scheduleSelection
-		apiGet("/DBAcessService.svc/GetProgramInfo", [query: [GatewaySN: getDeviceGatewaySN(childDevice), ScheduleNum: scheduleSelection, TempUnit: (getTemperatureUnit()=="F")?0:1]]) { response ->
+		apiGet("/DBAcessService.svc/GetProgramInfo", [query: [GatewaySN: getDeviceGatewaySN(childDevice), ScheduleNum: scheduleSelection, TempUnit: (getTemperatureScale()=="F")?0:1]]) { response ->
 			if (response.status == 200) {
 				state.data[childDevice.deviceNetworkId].coolingSetpoint = response.data.Cool_Set_Point
 				state.data[childDevice.deviceNetworkId].heatingSetpoint = response.data.Heat_Set_Point
@@ -519,7 +477,7 @@ def setProgram(childDevice, scheduleMode, scheduleSelection) {
 		Heat_Set_Point: state.data[childDevice.deviceNetworkId].heatingSetpoint,
 		Fan_Mode: lookupInfo("thermostatFanMode",state.data[childDevice.deviceNetworkId].thermostatFanMode.toString(),false),
 		Operation_Mode: lookupInfo("thermostatMode",state.data[childDevice.deviceNetworkId].thermostatMode.toString(),false),
-		Pref_Temp_Units: (getTemperatureUnit()=="F")?0:1,
+		Pref_Temp_Units: (getTemperatureScale()=="F")?0:1,
 		Program_Schedule_Mode: scheduleMode,
 		Program_Schedule_Selection: scheduleSelection,
 		Zone_Number: getDeviceZone(childDevice),
@@ -539,7 +497,8 @@ def setProgram(childDevice, scheduleMode, scheduleSelection) {
 					thermostatFanMode: lookupInfo( "thermostatFanMode", it.Fan_Mode.toString(), true ),
 					thermostatOperatingState: lookupInfo( "thermostatOperatingState", it.System_Status.toString(), true ),
 					thermostatProgramMode: it.Program_Schedule_Mode,
-					thermostatProgramSelection: it.Program_Schedule_Selection
+					thermostatProgramSelection: it.Program_Schedule_Selection,
+					awayMode: it.Away_Mode.toString()
 				]
 				thermostatData = [
 					coolingSetpoint: it.Cool_Set_Point,
@@ -565,10 +524,6 @@ def translateDesc(value) {
 	}
 }
 
-def getTemperatureUnit() {
-	return (location.temperatureScale)?location.temperatureScale:"F"
-}
-
 def getThermostatProgramName(childDevice, thermostatProgramSelection) {
 	def thermostatProgramSelectionName = state?.lookup?.program[childDevice.deviceNetworkId]?.getAt(thermostatProgramSelection.toString())
 	return thermostatProgramSelectionName?thermostatProgramSelectionName:"Unknown"
@@ -583,7 +538,7 @@ def getThermostatProgramNext(childDevice, value) {
 }
 
 def getTemperatureNext(value, diffIndex) {
-	if (getTemperatureUnit()=="F") {
+	if (getTemperatureScale()=="F") {
 		return (value + diffIndex)
 	} else {
 		def currentTemperatureIndex = state?.list?.temperatureRangeC?.findIndexOf { it == value.toString() }.toInteger()
@@ -593,7 +548,7 @@ def getTemperatureNext(value, diffIndex) {
 }
 
 def getSetPointLimit( childDevice, limitType ) { 
-	if (getTemperatureUnit() == "F") {
+	if (getTemperatureScale() == "F") {
 		return  state?.lookup?.getAt(limitType)?.getAt(childDevice.deviceNetworkId) 
 	} else {
 		if (limitType == "differenceSetPoint") {
@@ -604,4 +559,65 @@ def getSetPointLimit( childDevice, limitType ) {
 			return limitTemperatureC
 		}
 	}
+}
+
+// Set Away Mode
+def setAway(childDevice, awayStatus) {    
+	def awayMode = (awayStatus=="away")?"1":"0"
+	//Retrieve program info
+	state.data[childDevice.deviceNetworkId].awayMode = awayMode.toString()
+	
+	def apiQuery = [ 
+		awayMode: awayMode.toString(),
+		ZoneNumber: getDeviceZone(childDevice),
+		TempScale: (getTemperatureScale()=="F")?0:1,
+		GatewaySN: getDeviceGatewaySN(childDevice) 
+	]
+	
+	//Set Thermostat Program
+	apiPut("/DBAcessService.svc/SetAwayModeNew", [contentType: "application/json; charset=utf-8", requestContentType: "application/json; charset=utf-8", query: apiQuery]) { response ->
+		if (response.status == 200) {
+			response.data.tStatInfo.each { 
+				state.data[childDevice.deviceNetworkId] = [
+					temperature: it.Indoor_Temp,
+					humidity: it.Indoor_Humidity,
+					coolingSetpoint: it.Cool_Set_Point,
+					heatingSetpoint: it.Heat_Set_Point,
+					thermostatMode: lookupInfo( "thermostatMode", it.Operation_Mode.toString(), true ),
+					thermostatFanMode: lookupInfo( "thermostatFanMode", it.Fan_Mode.toString(), true ),
+					thermostatOperatingState: lookupInfo( "thermostatOperatingState", it.System_Status.toString(), true ),
+					thermostatProgramMode: it.Program_Schedule_Mode,
+					thermostatProgramSelection: it.Program_Schedule_Selection,
+					awayMode: it.Away_Mode.toString()
+				]
+			}
+		}
+	}
+	return state.data[childDevice.deviceNetworkId]
+}
+
+//API URL
+def getApiURL() { 
+	return "https://services.myicomfort.com"
+}
+
+//API Authorization header
+def getApiAuth() {
+	def basicAuth = settings.username + ":" + settings.password
+	return "Basic " + basicAuth.encodeAsBase64()
+}
+
+def runRefresh(evt) {
+	log.info "Last refresh was "  + ((now() - (state.polling["last"]?:0))/60000) + " minutes ago"
+	// Reschedule if  didn't update for more than 5 minutes plus specified polling
+	if ((((state.polling["last"]?:0) + (((settings.polling.toInteger() > 0 )? settings.polling.toInteger() : 1) * 60000) + 300000) < now()) && canSchedule()) {
+		log.info "Scheduling Auto Refresh.."
+		schedule("* */" + ((settings.polling.toInteger() > 0 )? settings.polling.toInteger() : 1) + " * * * ?", refresh)
+	}
+    
+	// Force Refresh NOWWW!!!!
+	refresh()
+    
+	//Update rescheduler's last run
+	if (!evt) state.polling["rescheduler"] = now()
 }
