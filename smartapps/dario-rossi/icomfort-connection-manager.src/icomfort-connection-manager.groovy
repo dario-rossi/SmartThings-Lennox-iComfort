@@ -28,11 +28,6 @@ definition(
     iconX2Url: "https://s3.amazonaws.com/smartapp-icons/Convenience/Cat-Convenience@2x.png",
     iconX3Url: "https://s3.amazonaws.com/smartapp-icons/Convenience/Cat-Convenience@2x.png")
     */
-    /*
-    iconUrl: "https://lh4.ggpht.com/HcqW1DAOAv1ycaZ6LyKE_XwMyVZ1BmmuLWSTzpYb_NHtRBFOzGXWPKpNTfKPwKuDz3o=w300-rw",
-    iconX2Url: "https://lh4.ggpht.com/HcqW1DAOAv1ycaZ6LyKE_XwMyVZ1BmmuLWSTzpYb_NHtRBFOzGXWPKpNTfKPwKuDz3o=w300-rw",
-    iconX3Url: "https://lh4.ggpht.com/HcqW1DAOAv1ycaZ6LyKE_XwMyVZ1BmmuLWSTzpYb_NHtRBFOzGXWPKpNTfKPwKuDz3o=w300-rw")
-	*/    
     iconUrl: "http://www.lennox.com/res/images/site/logo-badge.png",
     iconX2Url: "http://www.lennox.com/res/images/site/logo-badge.png",
     iconX3Url: "http://www.lennox.com/res/images/site/logo-badge.png")
